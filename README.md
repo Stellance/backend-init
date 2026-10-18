@@ -1,6 +1,6 @@
 # API Template
 
-NestJS 12 (Express) API on Postgres (Drizzle) and Redis. Includes JWT auth with refresh rotation, RBAC + CASL, Redis token-bucket rate limiting, request/trace IDs, structured logging, an append-only audit log, and migrate-on-deploy for Railway.
+NestJS 12 (Express) API on Postgres 18 (Drizzle) and Redis. Includes JWT auth with refresh rotation, RBAC + CASL, Redis token-bucket rate limiting, request/trace IDs, structured logging, an append-only audit log, and migrate-on-deploy for Railway.
 
 ## Using this template
 

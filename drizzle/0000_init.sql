@@ -27,7 +27,7 @@ CREATE TABLE "used_refresh_tokens" (
 );
 --> statement-breakpoint
 CREATE TABLE "users" (
-	"id" uuid PRIMARY KEY NOT NULL,
+	"id" uuid PRIMARY KEY DEFAULT uuidv7() NOT NULL,
 	"email" text NOT NULL,
 	"password_hash" text NOT NULL,
 	"role" "role" DEFAULT 'user' NOT NULL,

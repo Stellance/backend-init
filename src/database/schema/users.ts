@@ -1,6 +1,5 @@
 import { sql } from 'drizzle-orm';
 import { check, pgTable, text, timestamp, uuid } from 'drizzle-orm/pg-core';
-import { v7 } from 'uuid';
 import { roleEnum } from './role.js';
 
 export const users = pgTable(
@@ -8,7 +7,7 @@ export const users = pgTable(
   {
     id: uuid()
       .primaryKey()
-      .$defaultFn(() => v7()),
+      .default(sql`uuidv7()`),
     email: text().notNull().unique(),
     passwordHash: text().notNull(),
     role: roleEnum().notNull().default('user'),
