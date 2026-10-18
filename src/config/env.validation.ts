@@ -41,6 +41,11 @@ export class EnvVars {
   @Max(65535)
   PORT = 3000;
 
+  /** JWT issuer and OpenAPI title. */
+  @IsString()
+  @IsNotEmpty()
+  APP_NAME = 'api';
+
   @IsEnum(LogLevel)
   LOG_LEVEL: LogLevel = LogLevel.Info;
 

@@ -1,6 +1,16 @@
-# Blockstage Backend
+# API Template
 
-NestJS 12 (Express) API on Postgres (Drizzle) and Redis.
+NestJS 12 (Express) API on Postgres (Drizzle) and Redis. Includes JWT auth with refresh rotation, RBAC + CASL, Redis token-bucket rate limiting, request/trace IDs, structured logging, an append-only audit log, and migrate-on-deploy for Railway.
+
+## Using this template
+
+One command, no git history (`degit` downloads the files only):
+
+```bash
+pnpm dlx degit <github-user>/<repo> my-api && cd my-api && pnpm install && pnpm init-project my-api
+```
+
+`init-project` names the package, regenerates the migrations from scratch (fresh `init` plus the audit-log trigger), writes `.env` with a random `JWT_ACCESS_SECRET`, then deletes itself. Afterwards set `DATABASE_URL` and `REDIS_URL` in `.env`, then run `git init`.
 
 ## Local development
 

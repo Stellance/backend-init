@@ -14,7 +14,7 @@ import { JwtAuthGuard } from './jwt-auth.guard.js';
         secret: config.get('JWT_ACCESS_SECRET', { infer: true }),
         signOptions: {
           algorithm: 'HS256',
-          issuer: 'blockstage-backend',
+          issuer: config.get('APP_NAME', { infer: true }),
           expiresIn: config.get('ACCESS_TOKEN_TTL_SECONDS', { infer: true }),
         },
       }),

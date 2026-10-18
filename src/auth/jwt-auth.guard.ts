@@ -27,6 +27,7 @@ const isPayload = (p: unknown): p is AccessTokenPayload =>
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   private readonly secret: string;
+  private readonly issuer: string;
 
   constructor(
     private readonly jwt: JwtService,
@@ -34,6 +35,7 @@ export class JwtAuthGuard implements CanActivate {
     config: ConfigService<EnvVars, true>,
   ) {
     this.secret = config.get('JWT_ACCESS_SECRET', { infer: true });
+    this.issuer = config.get('APP_NAME', { infer: true });
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -52,7 +54,7 @@ export class JwtAuthGuard implements CanActivate {
       payload = await this.jwt.verifyAsync(token, {
         secret: this.secret,
         algorithms: ['HS256'],
-        issuer: 'blockstage-backend',
+        issuer: this.issuer,
       });
     } catch {
       throw new UnauthorizedException();

@@ -44,14 +44,15 @@ export function configureApp(app: NestExpressApplication): void {
   );
   app.enableShutdownHooks();
 
-  if (swaggerEnabled) setupSwagger(app);
+  if (swaggerEnabled)
+    setupSwagger(app, config.get('APP_NAME', { infer: true }));
 }
 
-function setupSwagger(app: INestApplication): void {
+function setupSwagger(app: INestApplication, appName: string): void {
   const document = SwaggerModule.createDocument(
     app,
     new DocumentBuilder()
-      .setTitle('Blockstage API')
+      .setTitle(`${appName} API`)
       .setVersion('1')
       .addBearerAuth()
       .build(),
