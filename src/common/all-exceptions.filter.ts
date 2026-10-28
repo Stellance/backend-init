@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { PinoLogger } from 'nestjs-pino';
+import type { ErrorResponseDto } from './response.dto.js';
 import { getRequestContext } from './request-context.js';
 
 const PG_UNIQUE_VIOLATION = '23505';
@@ -36,7 +37,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string = 'Internal server error';
-    let details: unknown;
+    let details: string[] | undefined;
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -47,7 +48,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const { message: m } = body as { message?: unknown };
         if (Array.isArray(m)) {
           message = 'Validation failed';
-          details = m;
+          details = m as string[];
         } else if (typeof m === 'string') {
           message = m;
         } else {
@@ -71,7 +72,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     }
 
     if (res.headersSent) return;
-    res.status(status).json({
+    const body: ErrorResponseDto = {
       statusCode: status,
       code: codeFor(status),
       message,
@@ -80,6 +81,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       traceId: ctx?.traceId,
       timestamp: new Date().toISOString(),
       path: req.path,
-    });
+    };
+    res.status(status).json(body);
   }
 }

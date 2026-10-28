@@ -12,16 +12,19 @@ import { getRequestContext } from '../common/request-context.js';
 import { type Role, roleEnum } from '../database/schema/index.js';
 import type { AuthenticatedRequest } from './auth-user.js';
 import { IS_PUBLIC_KEY } from './decorators.js';
+import { SessionRevocationService } from './session-revocation.service.js';
 
 interface AccessTokenPayload {
   sub: string;
   role: Role;
+  sid: string;
 }
 
 const isPayload = (p: unknown): p is AccessTokenPayload =>
   typeof p === 'object' &&
   p !== null &&
   typeof (p as AccessTokenPayload).sub === 'string' &&
+  typeof (p as AccessTokenPayload).sid === 'string' &&
   roleEnum.enumValues.includes((p as AccessTokenPayload).role);
 
 @Injectable()
@@ -32,6 +35,7 @@ export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwt: JwtService,
     private readonly reflector: Reflector,
+    private readonly revocations: SessionRevocationService,
     config: ConfigService<EnvVars, true>,
   ) {
     this.secret = config.get('JWT_ACCESS_SECRET', { infer: true });
@@ -60,6 +64,9 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException();
     }
     if (!isPayload(payload)) throw new UnauthorizedException();
+    if (await this.revocations.isRevoked(payload.sid)) {
+      throw new UnauthorizedException();
+    }
 
     req.user = { id: payload.sub, role: payload.role };
     const ctx = getRequestContext();

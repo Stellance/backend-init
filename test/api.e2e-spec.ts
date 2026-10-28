@@ -1,7 +1,9 @@
 import { v7 } from 'uuid';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { Pool } from 'pg';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import request from 'supertest';
+import { TokenCleanupService } from '../src/auth/token-cleanup.service.js';
 import {
   createPool,
   createTestApp,
@@ -9,6 +11,8 @@ import {
   PASSWORD,
   registerUser,
   uniqueEmail,
+  mailbox,
+  waitForMail,
 } from './helpers.js';
 
 describe('API (e2e)', () => {
@@ -44,11 +48,15 @@ describe('API (e2e)', () => {
         .set('Authorization', auth(session.accessToken))
         .expect(200);
       expect(me.body).toMatchObject({
+        statusCode: 200,
+        message: 'Profile retrieved',
+      });
+      expect(me.body.data).toMatchObject({
         email: session.email,
         role: 'user',
       });
-      expect(me.body.passwordHash).toBeUndefined();
-      expect(me.body.id[14]).toBe('7');
+      expect(me.body.data.passwordHash).toBeUndefined();
+      expect(me.body.data.id[14]).toBe('7');
     });
 
     it('rejects a duplicate email with 409', async () => {
@@ -106,11 +114,11 @@ describe('API (e2e)', () => {
           .send({ refreshToken: token });
 
       const rotated = await refresh(session.refreshToken).expect(200);
-      expect(rotated.body.refreshToken).not.toBe(session.refreshToken);
+      expect(rotated.body.data.refreshToken).not.toBe(session.refreshToken);
 
       await refresh(session.refreshToken).expect(401);
       // The legitimate descendant is revoked too.
-      await refresh(rotated.body.refreshToken).expect(401);
+      await refresh(rotated.body.data.refreshToken).expect(401);
 
       const { rows } = await pool.query(
         `SELECT 1 FROM audit_log WHERE action = 'auth.refresh_reuse_detected' AND request_id IS NOT NULL`,
@@ -124,7 +132,8 @@ describe('API (e2e)', () => {
         .post('/v1/auth/logout')
         .set('X-Forwarded-For', freshIp())
         .send({ refreshToken: session.refreshToken })
-        .expect(204);
+        .expect(204)
+        .expect((r) => expect(r.body).toEqual({}));
       await http()
         .post('/v1/auth/refresh')
         .set('X-Forwarded-For', freshIp())
@@ -145,6 +154,235 @@ describe('API (e2e)', () => {
     });
   });
 
+  describe('session revocation', () => {
+    const me = (token: string) =>
+      http()
+        .get('/v1/auth/me')
+        .set('X-Forwarded-For', freshIp())
+        .set('Authorization', auth(token));
+
+    it('logout kills the access token immediately', async () => {
+      const s = await registerUser(app);
+      await me(s.accessToken).expect(200);
+      await http()
+        .post('/v1/auth/logout')
+        .set('X-Forwarded-For', freshIp())
+        .send({ refreshToken: s.refreshToken })
+        .expect(204);
+      await me(s.accessToken).expect(401);
+    });
+
+    it('logout-all ends every session of the caller only', async () => {
+      const s = await registerUser(app);
+      const other = await registerUser(app);
+      const second = await login(s.email);
+      await http()
+        .post('/v1/auth/logout-all')
+        .set('X-Forwarded-For', freshIp())
+        .set('Authorization', auth(s.accessToken))
+        .expect(204);
+      await me(s.accessToken).expect(401);
+      await me(second.body.data.accessToken).expect(401);
+      await http()
+        .post('/v1/auth/refresh')
+        .set('X-Forwarded-For', freshIp())
+        .send({ refreshToken: second.body.data.refreshToken })
+        .expect(401);
+      await me(other.accessToken).expect(200);
+    });
+  });
+
+  describe('password reset', () => {
+    const forgot = (email: string) =>
+      http()
+        .post('/v1/auth/forgot-password')
+        .set('X-Forwarded-For', freshIp())
+        .send({ email });
+
+    it('answers identically for known and unknown emails, mailing only the known', async () => {
+      const s = await registerUser(app);
+      const unknown = uniqueEmail();
+      const a = await forgot(s.email).expect(202);
+      const b = await forgot(unknown).expect(202);
+      expect(a.body).toEqual(b.body);
+      await waitForMail(s.email, 'Reset your password');
+      await new Promise((r) => setTimeout(r, 100));
+      expect(mailbox.some((m) => m.to === unknown)).toBe(false);
+    });
+
+    it('resets the password, ends old sessions, and the token is single-use', async () => {
+      const s = await registerUser(app);
+      await forgot(s.email).expect(202);
+      const { token } = await waitForMail(s.email, 'Reset your password');
+      const newPassword = 'a-brand-new-password';
+
+      await http()
+        .post('/v1/auth/reset-password')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token, newPassword })
+        .expect(200);
+
+      await http()
+        .get('/v1/auth/me')
+        .set('X-Forwarded-For', freshIp())
+        .set('Authorization', auth(s.accessToken))
+        .expect(401);
+      await http()
+        .post('/v1/auth/refresh')
+        .set('X-Forwarded-For', freshIp())
+        .send({ refreshToken: s.refreshToken })
+        .expect(401);
+      expect((await login(s.email)).status).toBe(401);
+      await http()
+        .post('/v1/auth/login')
+        .set('X-Forwarded-For', freshIp())
+        .send({ email: s.email, password: newPassword })
+        .expect(200);
+
+      const replay = await http()
+        .post('/v1/auth/reset-password')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token, newPassword: 'another-new-password' })
+        .expect(400);
+      expect(replay.body.message).toBe('Invalid or expired token');
+    });
+
+    it('rejects an expired token', async () => {
+      const s = await registerUser(app);
+      await forgot(s.email).expect(202);
+      const { token } = await waitForMail(s.email, 'Reset your password');
+      await pool.query(
+        `UPDATE one_time_tokens SET expires_at = now() - interval '1 second' WHERE user_id = $1 AND purpose = 'reset_password'`,
+        [s.userId],
+      );
+      await http()
+        .post('/v1/auth/reset-password')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token, newPassword: 'a-brand-new-password' })
+        .expect(400);
+    });
+
+    it('a request inside the cooldown keeps the pending token', async () => {
+      const s = await registerUser(app);
+      await forgot(s.email).expect(202);
+      const first = await waitForMail(s.email, 'Reset your password');
+      const before = mailbox.length;
+      await forgot(s.email).expect(202);
+      await new Promise((r) => setTimeout(r, 150));
+      expect(mailbox.length).toBe(before);
+      await http()
+        .post('/v1/auth/reset-password')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token: first.token, newPassword: 'a-brand-new-password' })
+        .expect(200);
+    });
+
+    it('a request after the cooldown replaces the older token', async () => {
+      const s = await registerUser(app);
+      await forgot(s.email).expect(202);
+      const first = await waitForMail(s.email, 'Reset your password');
+      await pool.query(
+        `UPDATE one_time_tokens SET created_at = now() - interval '2 minutes' WHERE user_id = $1`,
+        [s.userId],
+      );
+      await forgot(s.email).expect(202);
+      for (let i = 0; i < 50; i++) {
+        const latest = await waitForMail(s.email, 'Reset your password');
+        if (latest.token !== first.token) break;
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      await http()
+        .post('/v1/auth/reset-password')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token: first.token, newPassword: 'a-brand-new-password' })
+        .expect(400);
+    });
+  });
+
+  describe('email verification', () => {
+    it('registration mails a link; verifying flips emailVerified once', async () => {
+      const s = await registerUser(app);
+      const meOf = () =>
+        http()
+          .get('/v1/auth/me')
+          .set('X-Forwarded-For', freshIp())
+          .set('Authorization', auth(s.accessToken));
+      expect((await meOf()).body.data.emailVerified).toBe(false);
+
+      const { token } = await waitForMail(s.email, 'Verify your email');
+      await http()
+        .post('/v1/auth/verify-email')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token })
+        .expect(200);
+      expect((await meOf()).body.data.emailVerified).toBe(true);
+      await http()
+        .post('/v1/auth/verify-email')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token })
+        .expect(400);
+    });
+
+    it('resend mails a fresh link until verified, then stops', async () => {
+      const s = await registerUser(app);
+      const first = await waitForMail(s.email, 'Verify your email');
+      const resend = () =>
+        http()
+          .post('/v1/auth/resend-verification')
+          .set('X-Forwarded-For', freshIp())
+          .set('Authorization', auth(s.accessToken))
+          .expect(202);
+      await pool.query(
+        `UPDATE one_time_tokens SET created_at = now() - interval '2 minutes' WHERE user_id = $1`,
+        [s.userId],
+      );
+      await resend();
+      let latest = first;
+      for (let i = 0; i < 50 && latest.token === first.token; i++) {
+        await new Promise((r) => setTimeout(r, 40));
+        latest = await waitForMail(s.email, 'Verify your email');
+      }
+      expect(latest.token).not.toBe(first.token);
+      await http()
+        .post('/v1/auth/verify-email')
+        .set('X-Forwarded-For', freshIp())
+        .send({ token: latest.token })
+        .expect(200);
+
+      const before = mailbox.length;
+      await resend();
+      await new Promise((r) => setTimeout(r, 150));
+      expect(mailbox.length).toBe(before);
+    });
+  });
+
+  describe('token cleanup', () => {
+    it('removes expired rows and keeps live ones', async () => {
+      const s = await registerUser(app);
+      const stale = `stale-${v7()}`;
+      const fresh = `fresh-${v7()}`;
+      await pool.query(
+        `INSERT INTO used_refresh_tokens (token_hash, family_id, used_at) VALUES ($1, $3, now() - interval '31 days'), ($2, $3, now())`,
+        [stale, fresh, v7()],
+      );
+      await pool.query(
+        `INSERT INTO refresh_tokens (token_hash, family_id, user_id, expires_at) VALUES ($1, $3, $4, now() - interval '1 day'), ($2, $3, $4, now() + interval '1 day')`,
+        [stale, fresh, v7(), s.userId],
+      );
+      await app.get(TokenCleanupService).run();
+      const used = await pool.query(
+        `SELECT token_hash FROM used_refresh_tokens WHERE token_hash IN ($1, $2)`,
+        [stale, fresh],
+      );
+      const live = await pool.query(
+        `SELECT token_hash FROM refresh_tokens WHERE token_hash IN ($1, $2)`,
+        [stale, fresh],
+      );
+      expect(used.rows).toEqual([{ token_hash: fresh }]);
+      expect(live.rows).toEqual([{ token_hash: fresh }]);
+    });
+  });
+
   describe('health', () => {
     it('is not public', async () => {
       await http().get('/health').set('X-Forwarded-For', freshIp()).expect(401);
@@ -158,6 +396,7 @@ describe('API (e2e)', () => {
         .set('Authorization', auth(session.accessToken))
         .expect(200);
       expect(res.body.status).toBe('ok');
+      expect(res.body.statusCode).toBeUndefined();
       expect(res.body.info.database.status).toBe('up');
       expect(res.body.info.redis.status).toBe('up');
     });
@@ -170,7 +409,7 @@ describe('API (e2e)', () => {
         session.userId,
       ]);
       const res = await login(session.email);
-      return { ...session, accessToken: res.body.accessToken as string };
+      return { ...session, accessToken: res.body.data.accessToken as string };
     }
 
     it('RBAC: plain user is forbidden from admin routes', async () => {
@@ -187,18 +426,42 @@ describe('API (e2e)', () => {
         .expect(403);
     });
 
-    it('RBAC: admin lists users with offset/limit pagination', async () => {
+    it('RBAC: admin lists users inside the paginated envelope', async () => {
       const admin = await makeAdmin();
       const res = await http()
-        .get('/v1/users?limit=2&offset=0')
+        .get('/v1/users?limit=2&page=1')
         .set('X-Forwarded-For', freshIp())
         .set('Authorization', auth(admin.accessToken))
         .expect(200);
-      expect(res.body.limit).toBe(2);
-      expect(res.body.offset).toBe(0);
-      expect(res.body.data.length).toBeLessThanOrEqual(2);
-      expect(res.body.total).toBeGreaterThanOrEqual(res.body.data.length);
-      expect(res.body.data[0].passwordHash).toBeUndefined();
+      const { statusCode, message, data } = res.body;
+      expect(statusCode).toBe(200);
+      expect(message).toBe('Users retrieved');
+      expect(data.results.length).toBeLessThanOrEqual(2);
+      expect(data.results[0].passwordHash).toBeUndefined();
+      expect(data.paginationMeta).toEqual({
+        pageCount: data.results.length,
+        totalPages: Math.ceil(data.paginationMeta.totalCount / 2),
+        totalCount: expect.any(Number),
+        previousPage: false,
+        nextPage: data.paginationMeta.totalCount > 2,
+      });
+    });
+
+    it('reports previous/next across pages', async () => {
+      const admin = await makeAdmin();
+      const get = (page: number) =>
+        http()
+          .get(`/v1/users?limit=1&page=${page}`)
+          .set('X-Forwarded-For', freshIp())
+          .set('Authorization', auth(admin.accessToken))
+          .expect(200);
+      const second = (await get(2)).body.data.paginationMeta;
+      expect(second.previousPage).toBe(true);
+      const last = (await get(second.totalPages)).body.data.paginationMeta;
+      expect(last.nextPage).toBe(false);
+      const beyond = (await get(second.totalPages + 1)).body.data;
+      expect(beyond.results).toEqual([]);
+      expect(beyond.paginationMeta.pageCount).toBe(0);
     });
 
     it('caps page size', async () => {
@@ -222,7 +485,8 @@ describe('API (e2e)', () => {
           .set('X-Forwarded-For', freshIp())
           .set('Authorization', auth(token));
 
-      await get(a.userId, a.accessToken).expect(200);
+      const own = await get(a.userId, a.accessToken).expect(200);
+      expect(own.body.data.id).toBe(a.userId);
       await get(b.userId, a.accessToken).expect(403);
       await get(b.userId, admin.accessToken).expect(200);
       // Non-admins cannot probe for existence via 404 vs 403.
@@ -237,9 +501,9 @@ describe('API (e2e)', () => {
         .set('X-Forwarded-For', freshIp())
         .set('Authorization', auth(admin.accessToken))
         .expect(200);
-      expect(res.body.data.length).toBeGreaterThan(0);
+      expect(res.body.data.results.length).toBeGreaterThan(0);
       expect(
-        res.body.data.every(
+        res.body.data.results.every(
           (r: { action: string }) => r.action === 'auth.register',
         ),
       ).toBe(true);
@@ -339,7 +603,7 @@ describe('API (e2e)', () => {
         .set('X-Forwarded-For', freshIp())
         .send({ email, password: PASSWORD })
         .expect(201);
-      expect(first.body.accessToken).toBeDefined();
+      expect(first.body.data.accessToken).toBeDefined();
       const requestId = `dup-${v7()}`;
       await http()
         .post('/v1/auth/register')
@@ -352,6 +616,33 @@ describe('API (e2e)', () => {
         [requestId],
       );
       expect(rows).toHaveLength(0);
+    });
+  });
+
+  describe('openapi', () => {
+    const methods = ['get', 'post', 'put', 'patch', 'delete'] as const;
+
+    it('documents every operation with summary, description, success and error schemas', () => {
+      const doc = SwaggerModule.createDocument(
+        app,
+        new DocumentBuilder().build(),
+      );
+      const missing: string[] = [];
+      for (const [path, item] of Object.entries(doc.paths)) {
+        if (path === '/health') continue;
+        for (const m of methods) {
+          const op = item[m];
+          if (!op) continue;
+          const id = `${m.toUpperCase()} ${path}`;
+          if (!op.summary || !op.description) missing.push(`${id}: summary`);
+          const codes = Object.keys(op.responses);
+          if (!codes.some((c) => c.startsWith('2'))) missing.push(`${id}: 2xx`);
+          if (!codes.includes('500')) missing.push(`${id}: error`);
+        }
+      }
+      expect(missing).toEqual([]);
+      expect(doc.components?.schemas).toHaveProperty('ErrorResponseDto');
+      expect(doc.components?.schemas).toHaveProperty('PaginationMetaDto');
     });
   });
 });

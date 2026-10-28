@@ -5,14 +5,18 @@ import {
   HealthIndicatorService,
   type HealthIndicatorResult,
 } from '@nestjs/terminus';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Inject } from '@nestjs/common';
 import { Redis } from 'ioredis';
+import { RawResponse } from '../common/api-endpoint.decorator.js';
 import { Database } from '../database/database.js';
 import { REDIS } from '../redis/redis.module.js';
 
 // Protected by the global JwtAuthGuard: no @Public().
+@ApiTags('health')
 @ApiBearerAuth()
+// Terminus shape is kept so probes and monitors can parse it.
+@RawResponse()
 @Controller({ path: 'health', version: VERSION_NEUTRAL })
 export class HealthController {
   constructor(
@@ -22,6 +26,11 @@ export class HealthController {
     @Inject(REDIS) private readonly redis: Redis,
   ) {}
 
+  @ApiOperation({
+    summary: 'Check dependencies',
+    description:
+      'Pings Postgres and Redis. Returns 503 with the Terminus body when either is down. Requires a valid JWT.',
+  })
   @HealthCheck()
   @Get()
   check() {

@@ -53,9 +53,15 @@ function setupSwagger(app: INestApplication, appName: string): void {
     app,
     new DocumentBuilder()
       .setTitle(`${appName} API`)
+      .setDescription(
+        'Success bodies are `{ statusCode, message, data }`; paginated `data` is `{ results, paginationMeta }`. Errors share one envelope (see ErrorResponseDto).',
+      )
       .setVersion('1')
       .addBearerAuth()
       .build(),
   );
-  SwaggerModule.setup('docs', app, document);
+  SwaggerModule.setup('docs', app, document, {
+    jsonDocumentUrl: 'docs/json',
+    swaggerOptions: { persistAuthorization: true },
+  });
 }

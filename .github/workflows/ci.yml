@@ -34,8 +34,9 @@ jobs:
           node-version: 24
       - run: npm install -g pnpm@12.4.2
       - run: pnpm install --frozen-lockfile
+      - run: pnpm audit --prod --audit-level high
       - run: pnpm typecheck
       - run: pnpm lint
-      - run: pnpm test
+      - run: pnpm test:cov
       - run: pnpm build
       - run: pnpm test:e2e

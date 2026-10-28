@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 import { AuditModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
@@ -9,9 +9,11 @@ import { AuthorizationModule } from './authorization/authorization.module.js';
 import { PoliciesGuard, RolesGuard } from './authorization/guards.js';
 import { AllExceptionsFilter } from './common/all-exceptions.filter.js';
 import { getRequestContext } from './common/request-context.js';
+import { ResponseInterceptor } from './common/response.interceptor.js';
 import { type EnvVars, NodeEnv, validateEnv } from './config/env.validation.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
+import { MailModule } from './mail/mail.module.js';
 import { RateLimitGuard } from './rate-limit/rate-limit.guard.js';
 import { RateLimitModule } from './rate-limit/rate-limit.module.js';
 import { RedisModule } from './redis/redis.module.js';
@@ -85,6 +87,7 @@ import { UsersModule } from './users/users.module.js';
     }),
     DatabaseModule,
     RedisModule,
+    MailModule,
     RateLimitModule,
     AuthModule,
     AuthorizationModule,
@@ -94,6 +97,7 @@ import { UsersModule } from './users/users.module.js';
   ],
   providers: [
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    { provide: APP_INTERCEPTOR, useClass: ResponseInterceptor },
     // Order matters: authenticate, then rate limit by user, then authorise.
     { provide: APP_GUARD, useExisting: JwtAuthGuard },
     { provide: APP_GUARD, useExisting: RateLimitGuard },
