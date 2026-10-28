@@ -1,4 +1,4 @@
-FROM node:24-slim AS base
+FROM node:25-slim AS base
 RUN npm install -g pnpm@12.4.2
 WORKDIR /app
 
@@ -13,7 +13,7 @@ FROM base AS prod-deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile --prod
 
-FROM node:24-slim AS runtime
+FROM node:25-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
