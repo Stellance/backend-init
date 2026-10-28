@@ -6,13 +6,41 @@ import { Pool } from 'pg';
 import request from 'supertest';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
+import { Mailer, type MailMessage } from '../src/mail/mailer.js';
 import { runMigrations } from '../src/database/migrator.js';
+
+export const mailbox: MailMessage[] = [];
+
+/** Mail is sent in the background, so tests poll for it. */
+export async function waitForMail(
+  to: string,
+  subject: string,
+): Promise<{ message: MailMessage; token: string }> {
+  for (let i = 0; i < 50; i++) {
+    const message = mailbox.findLast(
+      (m) => m.to === to && m.subject === subject,
+    );
+    if (message) {
+      return { message, token: /token=([\w-]+)/.exec(message.text)![1] };
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error(`No "${subject}" mail for ${to}`);
+}
 
 export async function createTestApp(): Promise<NestExpressApplication> {
   await runMigrations(process.env.DATABASE_URL!, resolve('drizzle'));
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
-  }).compile();
+  })
+    .overrideProvider(Mailer)
+    .useValue({
+      send: (m: MailMessage) => {
+        mailbox.push(m);
+        return Promise.resolve();
+      },
+    })
+    .compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({
     bufferLogs: true,
   });
@@ -51,12 +79,12 @@ export async function registerUser(
   const me = await request(app.getHttpServer())
     .get('/v1/auth/me')
     .set('X-Forwarded-For', freshIp())
-    .set('Authorization', `Bearer ${res.body.accessToken}`)
+    .set('Authorization', `Bearer ${res.body.data.accessToken}`)
     .expect(200);
   return {
     email,
-    accessToken: res.body.accessToken,
-    refreshToken: res.body.refreshToken,
-    userId: me.body.id,
+    accessToken: res.body.data.accessToken,
+    refreshToken: res.body.data.refreshToken,
+    userId: me.body.data.id,
   };
 }

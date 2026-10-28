@@ -4,6 +4,8 @@ import { JwtModule } from '@nestjs/jwt';
 import type { EnvVars } from '../config/env.validation.js';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
+import { SessionRevocationService } from './session-revocation.service.js';
+import { TokenCleanupService } from './token-cleanup.service.js';
 import { JwtAuthGuard } from './jwt-auth.guard.js';
 
 @Module({
@@ -21,7 +23,12 @@ import { JwtAuthGuard } from './jwt-auth.guard.js';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard],
+  providers: [
+    AuthService,
+    JwtAuthGuard,
+    SessionRevocationService,
+    TokenCleanupService,
+  ],
   exports: [JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}

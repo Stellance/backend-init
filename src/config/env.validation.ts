@@ -81,6 +81,17 @@ export class EnvVars {
   @Min(1)
   REFRESH_TOKEN_TTL_DAYS = 30;
 
+  /** Minutes between expired-token sweeps. 0 disables the sweep. */
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  TOKEN_CLEANUP_INTERVAL_MINUTES = 60;
+
+  /** Base URL of the web app; emailed links point here. */
+  @IsString()
+  @IsNotEmpty()
+  PUBLIC_WEB_URL = 'http://localhost:3000';
+
   /** Comma-separated allowlist. Empty disables CORS. */
   @IsString()
   CORS_ORIGINS = '';
