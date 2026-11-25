@@ -54,18 +54,18 @@
     "@nestjs/schematics": "^12.0.16",
     "@nestjs/testing": "^12.6.0",
     "@types/express": "^5.0.6",
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.6",
     "@types/pg": "^8.23.1",
     "@types/supertest": "^7.2.1",
-    "@vitest/coverage-v8": "^4.1.12",
+    "@vitest/coverage-v8": "^5.1.1",
     "drizzle-kit": "^0.31.11",
     "oxlint": "^1.94.0",
-    "oxlint-tsgolint": "^7.0.2007",
+    "oxlint-tsgolint": "^7.0.2008",
     "pino-pretty": "^13.2.0",
     "prettier": "^3.10.1",
     "source-map-support": "^0.5.21",
     "supertest": "^7.3.2",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.12"
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
   }
 }
